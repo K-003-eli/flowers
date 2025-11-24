@@ -1,0 +1,368 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Double Snap Photobooth</title>
+    <style>
+        :root {
+            --accent-color: #ff0077; /* Hot Pink */
+            --bg-color: #1a1a1a;
+            --text-color: #ffffff;
+            --strip-width: 300px;
+        }
+
+        body {
+            font-family: 'Arial', sans-serif;
+            margin: 0;
+            padding: 0;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+            min-height: 100vh;
+            background-color: var(--bg-color);
+            color: var(--text-color);
+        }
+
+        /* ?? Video and Canvas Containers */
+        #video-container, #output-container {
+            position: relative;
+            width: 100%;
+            max-width: 600px;
+            margin: 20px 0;
+            overflow: hidden;
+            border-radius: 12px;
+            box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5);
+            aspect-ratio: 4 / 3; /* Common photo ratio */
+            background-color: black;
+        }
+
+        #video-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        #live-video {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            transform: scaleX(-1); /* Mirror the video for a selfie feel */
+        }
+
+        #output-canvas {
+            display: block;
+            width: 100%;
+            height: auto;
+        }
+
+        /* ?? Countdown Overlay */
+        #countdown-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none; /* Hidden by default */
+            align-items: center;
+            justify-content: center;
+            background: rgba(0, 0, 0, 0.5);
+            z-index: 10;
+        }
+
+        #countdown-text {
+            font-size: 10rem;
+            font-weight: bold;
+            color: var(--text-color);
+            text-shadow: 0 0 15px var(--accent-color);
+            animation: pulse 1s infinite alternate;
+        }
+
+        @keyframes pulse {
+            from { transform: scale(1); opacity: 1; }
+            to { transform: scale(1.1); opacity: 0.8; }
+        }
+
+        /* ?? Flash Effect */
+        #flash-overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            background: white;
+            opacity: 0;
+            z-index: 20;
+            pointer-events: none;
+        }
+
+        /* ?? Buttons and Controls */
+        #controls {
+            margin-top: 20px;
+        }
+
+        .button {
+            padding: 15px 30px;
+            font-size: 1.2rem;
+            font-weight: bold;
+            border: none;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: transform 0.2s, background-color 0.2s;
+            text-transform: uppercase;
+        }
+
+        #startButton {
+            background-color: var(--accent-color);
+            color: var(--text-color);
+            box-shadow: 0 5px 15px rgba(255, 0, 119, 0.4);
+        }
+
+        #startButton:hover {
+            transform: scale(1.05);
+            background-color: #ff3399;
+        }
+
+        #downloadButton {
+            display: none;
+            background-color: var(--text-color);
+            color: var(--bg-color);
+            margin-top: 15px;
+        }
+
+        #downloadButton:hover {
+            transform: scale(1.05);
+            background-color: #ddd;
+        }
+    </style>
+</head>
+<body>
+
+    <h1>?? Double Snap Photobooth</h1>
+    
+    <div id="video-container">
+        <video id="live-video" autoplay playsinline></video>
+        <div id="countdown-overlay">
+            <span id="countdown-text">3</span>
+        </div>
+        <div id="flash-overlay"></div>
+    </div>
+
+    <div id="output-container" style="display: none;">
+        <canvas id="output-canvas"></canvas>
+    </div>
+
+    <div id="controls">
+        <button id="startButton" class="button">Start Photobooth</button>
+        <button id="downloadButton" class="button">Download Strip</button>
+    </div>
+
+    <script>
+        // DOM Elements
+        const liveVideo = document.getElementById('live-video');
+        const startButton = document.getElementById('startButton');
+        const downloadButton = document.getElementById('downloadButton');
+        const videoContainer = document.getElementById('video-container');
+        const outputContainer = document.getElementById('output-container');
+        const outputCanvas = document.getElementById('output-canvas');
+        const countdownOverlay = document.getElementById('countdown-overlay');
+        const countdownText = document.getElementById('countdown-text');
+        const flashOverlay = document.getElementById('flash-overlay');
+
+        const capturedImages = [];
+        let stream;
+
+        // --- 1. Camera Initialization ---
+        async function initCamera() {
+            try {
+                // Request access to the user's camera (video)
+                stream = await navigator.mediaDevices.getUserMedia({ 
+                    video: { 
+                        width: { ideal: 640 }, 
+                        height: { ideal: 480 },
+                        facingMode: 'user' // Use 'environment' for back camera
+                    } 
+                });
+                liveVideo.srcObject = stream;
+                console.log("Camera stream started.");
+                startButton.disabled = false;
+                startButton.textContent = "Start Photobooth";
+            } catch (err) {
+                console.error("Error accessing camera:", err);
+                startButton.textContent = "Camera Error: Check Permissions";
+                startButton.disabled = true;
+            }
+        }
+
+        // --- 2. Capture Utility Functions ---
+        
+        function flashEffect() {
+            flashOverlay.style.transition = 'opacity 0.05s';
+            flashOverlay.style.opacity = 1;
+            setTimeout(() => {
+                flashOverlay.style.opacity = 0;
+            }, 100);
+        }
+
+        function capturePhoto() {
+            // Use the video's current dimensions
+            const videoWidth = liveVideo.videoWidth;
+            const videoHeight = liveVideo.videoHeight;
+            
+            // Temporary canvas for capturing a single frame
+            const tempCanvas = document.createElement('canvas');
+            const tempCtx = tempCanvas.getContext('2d');
+
+            tempCanvas.width = videoWidth;
+            tempCanvas.height = videoHeight;
+
+            // Draw the video frame to the canvas
+            // Apply mirroring effect (same as CSS)
+            tempCtx.translate(videoWidth, 0);
+            tempCtx.scale(-1, 1);
+            tempCtx.drawImage(liveVideo, 0, 0, videoWidth, videoHeight);
+            
+            // Convert canvas to image data URL
+            const imageDataUrl = tempCanvas.toDataURL('image/png');
+            capturedImages.push(imageDataUrl);
+            flashEffect();
+            console.log(`Captured Image ${capturedImages.length}`);
+        }
+
+        function countdown(duration, callback) {
+            countdownOverlay.style.display = 'flex';
+            let count = duration;
+            countdownText.textContent = count;
+
+            const timer = setInterval(() => {
+                count--;
+                if (count > 0) {
+                    countdownText.textContent = count;
+                } else if (count === 0) {
+                    countdownText.textContent = 'SNAP!';
+                } else {
+                    clearInterval(timer);
+                    countdownOverlay.style.display = 'none';
+                    callback();
+                }
+            }, 1000);
+        }
+
+        // --- 3. Main Sequence ---
+
+        async function startCaptureSequence() {
+            startButton.disabled = true;
+            capturedImages.length = 0; // Clear previous captures
+
+            // Step 1: Countdown 3 seconds for the first picture
+            await new Promise(resolve => countdown(3, resolve));
+            
+            // Step 2: Capture Picture 1 (P1)
+            capturePhoto();
+            
+            // Step 3: Wait 2 seconds
+            await new Promise(resolve => setTimeout(resolve, 2000));
+            
+            // Step 4: Countdown 2 seconds for the second picture (Optional, can be removed for faster snap)
+            await new Promise(resolve => countdown(2, resolve));
+            
+            // Step 5: Capture Picture 2 (P2)
+            capturePhoto();
+
+            // Step 6: Generate Photostrip
+            if (capturedImages.length === 2) {
+                generatePhotostrip(capturedImages[0], capturedImages[1]);
+            }
+        }
+
+        // --- 4. Photostrip Generation ---
+
+        function generatePhotostrip(imgData1, imgData2) {
+            // Get the container's width (which controls the strip width)
+            const stripWidth = videoContainer.clientWidth; 
+            const imgRatio = liveVideo.videoHeight / liveVideo.videoWidth;
+            const imgHeight = stripWidth * imgRatio;
+
+            // Set canvas size for the vertical strip (1x2 + header/footer)
+            const headerHeight = 50;
+            const footerHeight = 30;
+            const totalHeight = (imgHeight * 2) + headerHeight + footerHeight;
+
+            outputCanvas.width = stripWidth;
+            outputCanvas.height = totalHeight;
+            const ctx = outputCanvas.getContext('2d');
+
+            // 1. Background (White Photostrip)
+            ctx.fillStyle = 'white';
+            ctx.fillRect(0, 0, stripWidth, totalHeight);
+            
+            // 2. Header Text
+            ctx.fillStyle = 'black';
+            ctx.font = '20px Arial';
+            ctx.textAlign = 'center';
+            ctx.fillText('DOUBLE SNAP', stripWidth / 2, headerHeight / 2 + 8);
+            
+            // 3. Draw Pictures
+            const p1 = new Image();
+            p1.onload = () => {
+                ctx.drawImage(p1, 0, headerHeight, stripWidth, imgHeight);
+
+                const p2 = new Image();
+                p2.onload = () => {
+                    ctx.drawImage(p2, 0, headerHeight + imgHeight, stripWidth, imgHeight);
+
+                    // Show the strip and hide the video
+                    videoContainer.style.display = 'none';
+                    outputContainer.style.display = 'block';
+                    downloadButton.style.display = 'inline-block';
+                    startButton.textContent = "Take Another";
+                    startButton.disabled = false;
+                };
+                p2.src = imgData2;
+            };
+            p1.src = imgData1;
+        }
+
+        // --- 5. Download Function ---
+
+        function downloadPhotostrip() {
+            const dataURL = outputCanvas.toDataURL('image/png');
+            const a = document.createElement('a');
+            a.href = dataURL;
+            a.download = 'doublesnap_photostrip.png';
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+        }
+
+        // --- 6. Event Listeners ---
+
+        startButton.addEventListener('click', () => {
+            // If the output is visible, switch back to the video view
+            if (outputContainer.style.display !== 'none') {
+                outputContainer.style.display = 'none';
+                videoContainer.style.display = 'block';
+                downloadButton.style.display = 'none';
+                startButton.textContent = "Start Photobooth";
+                startButton.disabled = false;
+                capturedImages.length = 0; // Reset for a new session
+            } else {
+                startCaptureSequence();
+            }
+        });
+
+        downloadButton.addEventListener('click', downloadPhotostrip);
+
+        // Start everything on page load
+        liveVideo.addEventListener('loadedmetadata', () => {
+            // This ensures the video size is available before any capture
+            console.log("Video metadata loaded.");
+        });
+
+        initCamera();
+
+    </script>
+
+</body>
+</html>
